@@ -205,6 +205,8 @@ pub struct Daemonize<T> {
     chown_pid_file: bool,
     user: Option<User>,
     group: Option<Group>,
+    stdout_file: Option<String>,
+    stderr_file: Option<String>,
     umask: mode_t,
     privileged_action: Box<Fn() -> T>,
 }
@@ -217,6 +219,8 @@ impl<T> fmt::Debug for Daemonize<T> {
             .field("chown_pid_file", &self.chown_pid_file)
             .field("user", &self.user)
             .field("group", &self.group)
+            .field("stdout_file", &self.stdout_file)
+            .field("stderr_file", &self.stderr_file)
             .field("umask", &self.umask)
             .finish()
     }
@@ -231,6 +235,8 @@ impl Daemonize<()> {
             chown_pid_file: false,
             user: None,
             group: None,
+            stdout_file: None,
+            stderr_file: None,
             umask: 0o027,
             privileged_action: Box::new(|| ()),
         }
@@ -266,6 +272,18 @@ impl<T> Daemonize<T> {
     /// Drop privileges to `group`.
     pub fn group<G: Into<Group>>(mut self, group: G) -> Self {
         self.group = Some(group.into());
+        self
+    }
+
+    /// Set `stdout_file`.
+    pub fn stdout_file(mut self, stdout_file: String) -> Self {
+        self.stdout_file = Some(stdout_file.into());
+        self
+    }
+
+    /// Set `stderr_file`.
+    pub fn stderr_file(mut self, stderr_file: String) -> Self {
+        self.stderr_file = Some(stderr_file.into());
         self
     }
 
@@ -307,7 +325,7 @@ impl<T> Daemonize<T> {
 
             try!(perform_fork());
 
-            try!(redirect_standard_streams());
+            try!(redirect_standard_streams(self.stdout_file, self.stderr_file));
 
             let uid = maptry!(self.user, get_user);
             let gid = maptry!(self.group, get_group);
@@ -352,24 +370,54 @@ unsafe fn set_sid() -> Result<()> {
     tryret!(setsid(), Ok(()), DaemonizeError::DetachSession)
 }
 
-unsafe fn redirect_standard_streams() -> Result<()> {
-    macro_rules! for_every_stream {
-        ($expr:expr) => (
-            for stream in &[libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
-                tryret!($expr(*stream), (), DaemonizeError::RedirectStreams);
-            }
-        )
+unsafe fn redirect_standard_streams(stdout_file: Option<String>, stderr_file: Option<String>) -> Result<()> {
+    for stream in &[libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+        tryret!(close(*stream), (), DaemonizeError::RedirectStreams);
     }
-    for_every_stream!(close);
 
-    let devnull_file = fopen(transmute(b"/dev/null\0"), transmute(b"w+\0"));
-    if devnull_file.is_null() {
-        return Err(DaemonizeError::RedirectStreams(errno()))
-    };
+//    let devnull_fd: libc::c_int;
 
-    let devnull_fd = fileno(devnull_file);
-    for_every_stream!(|stream| dup2(devnull_fd, stream));
-    tryret!(close(devnull_fd), (), DaemonizeError::RedirectStreams);
+//    {
+        let devnull_file = fopen(transmute(b"/dev/null\0"), transmute(b"w+\0"));
+        if devnull_file.is_null() {
+            return Err(DaemonizeError::RedirectStreams(errno()))
+        };
+
+        // for_every_stream!(|stream| dup2(devnull_fd, stream));
+        let devnull_fd : libc::c_int = fileno(devnull_file);
+        tryret!(dup2(devnull_fd, libc::STDIN_FILENO), (), DaemonizeError::RedirectStreams);
+        tryret!(close(devnull_fd), (), DaemonizeError::RedirectStreams);
+//    }
+
+    match stdout_file {
+        Some(stdout) => {
+            let stdout_as_ptr = CString::new(stdout).unwrap().as_ptr();
+            let stdout_file = fopen(stdout_as_ptr, transmute(b"w+\0"));
+            if stdout_file.is_null() {
+                return Err(DaemonizeError::RedirectStreams(libc::ENOENT))
+            };
+
+            dup2(fileno(stdout_file), libc::STDOUT_FILENO);
+        },
+        None => {
+            tryret!(dup2(devnull_fd, libc::STDOUT_FILENO), (), DaemonizeError::RedirectStreams);
+        }
+    }
+
+    match stderr_file {
+        Some(stderr) => {
+            let stderr_as_ptr = CString::new(stderr).unwrap().as_ptr();
+            let stderr_file = fopen(stderr_as_ptr, transmute(b"w+\0"));
+            if stderr_file.is_null() {
+                return Err(DaemonizeError::RedirectStreams(libc::ENOENT))
+            };
+            dup2(fileno(stderr_file), libc::STDERR_FILENO);
+        },
+
+        None => {
+            tryret!(dup2(devnull_fd, libc::STDOUT_FILENO), (), DaemonizeError::RedirectStreams);
+        }
+    }
 
     Ok(())
 }
