@@ -371,7 +371,8 @@ unsafe fn set_sid() -> Result<()> {
 }
 
 unsafe fn redirect_standard_streams(stdout_file: Option<String>, stderr_file: Option<String>) -> Result<()> {
-    for stream in &[libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+//    for stream in &[libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+    for stream in &[libc::STDIN_FILENO, libc::STDOUT_FILENO] {
         tryret!(close(*stream), (), DaemonizeError::RedirectStreams);
     }
 
@@ -404,20 +405,20 @@ unsafe fn redirect_standard_streams(stdout_file: Option<String>, stderr_file: Op
         }
     }
 
-    match stderr_file {
-        Some(stderr) => {
-            let stderr_as_ptr = CString::new(stderr).unwrap().as_ptr();
-            let stderr_file = fopen(stderr_as_ptr, transmute(b"w+\0"));
-            if stderr_file.is_null() {
-                return Err(DaemonizeError::RedirectStreams(libc::ENOENT))
-            };
-            dup2(fileno(stderr_file), libc::STDERR_FILENO);
-        },
+    // match stderr_file {
+    //     Some(stderr) => {
+    //         let stderr_as_ptr = CString::new(stderr).unwrap().as_ptr();
+    //         let stderr_file = fopen(stderr_as_ptr, transmute(b"w+\0"));
+    //         if stderr_file.is_null() {
+    //             return Err(DaemonizeError::RedirectStreams(libc::ENOENT))
+    //         };
+    //         dup2(fileno(stderr_file), libc::STDERR_FILENO);
+    //     },
 
-        None => {
-            tryret!(dup2(devnull_fd, libc::STDOUT_FILENO), (), DaemonizeError::RedirectStreams);
-        }
-    }
+    //     None => {
+    //         tryret!(dup2(devnull_fd, libc::STDOUT_FILENO), (), DaemonizeError::RedirectStreams);
+    //     }
+    // }
 
     Ok(())
 }
