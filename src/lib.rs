@@ -51,8 +51,6 @@ use std::os::unix::ffi::OsStringExt;
 use std::mem::{transmute};
 use std::path::{Path, PathBuf};
 use std::process::{exit};
-use std::time::Duration;
-use std::thread;
 
 pub use libc::{uid_t, gid_t, mode_t};
 use libc::{LOCK_EX, LOCK_NB, c_int, fopen, write, close, fileno, fork, getpid, setsid, setuid, setgid, dup2, umask};
@@ -207,8 +205,8 @@ pub struct Daemonize<T> {
     chown_pid_file: bool,
     user: Option<User>,
     group: Option<Group>,
-    stdout_file: Option<String>,
-    stderr_file: Option<String>,
+    stdout_file: Option<PathBuf>,
+    stderr_file: Option<PathBuf>,
     umask: mode_t,
     privileged_action: Box<Fn() -> T>,
 }
@@ -278,14 +276,14 @@ impl<T> Daemonize<T> {
     }
 
     /// Set `stdout_file`.
-    pub fn stdout_file(mut self, stdout_file: String) -> Self {
-        self.stdout_file = Some(stdout_file.into());
+    pub fn stdout_file<F: AsRef<Path>>(mut self, path: F) -> Self {
+        self.stdout_file = Some(path.as_ref().to_owned());
         self
     }
 
     /// Set `stderr_file`.
-    pub fn stderr_file(mut self, stderr_file: String) -> Self {
-        self.stderr_file = Some(stderr_file.into());
+    pub fn stderr_file<F: AsRef<Path>>(mut self, path: F) -> Self {
+        self.stderr_file = Some(path.as_ref().to_owned());
         self
     }
 
@@ -319,6 +317,9 @@ impl<T> Daemonize<T> {
         unsafe {
             let pid_file_fd = maptry!(self.pid_file.clone(), create_pid_file);
 
+            maptry!(self.stdout_file.clone(), create_pid_file);
+            maptry!(self.stderr_file.clone(), create_pid_file);
+
             try!(perform_fork());
 
             try!(set_current_dir(self.directory).map_err(|_| DaemonizeError::ChangeDirectory));
@@ -350,6 +351,8 @@ impl<T> Daemonize<T> {
             maptry!(uid, set_user);
 
             maptry!(pid_file_fd, write_pid_file);
+//            maptry!(stdout_file_fd, write_pid_file);
+//            maptry!(stderr_file_fd, write_pid_file);
 
             Ok(privileged_action_result)
         }
@@ -372,7 +375,7 @@ unsafe fn set_sid() -> Result<()> {
     tryret!(setsid(), Ok(()), DaemonizeError::DetachSession)
 }
 
-unsafe fn redirect_standard_streams(stdout_file: Option<String>, stderr_file: Option<String>) -> Result<()> {
+unsafe fn redirect_standard_streams(stdout_file: Option<PathBuf>, stderr_file: Option<PathBuf>) -> Result<()> {
     for stream in &[libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
         tryret!(close(*stream), (), DaemonizeError::RedirectStreams);
     }
@@ -389,8 +392,8 @@ unsafe fn redirect_standard_streams(stdout_file: Option<String>, stderr_file: Op
 
     match stdout_file {
         Some(stdout) => {
-            let stdout_as_ptr = CString::new(stdout).unwrap().as_ptr();
-            let stdout_file = fopen(stdout_as_ptr, transmute(b"w+\0"));
+            let path_c = try!(pathbuf_into_cstring(stdout));
+            let stdout_file = fopen(path_c.as_ptr(), transmute(b"w+\0"));
             if stdout_file.is_null() {
                 return Err(DaemonizeError::RedirectStreams(libc::ENOENT))
             };
@@ -404,8 +407,8 @@ unsafe fn redirect_standard_streams(stdout_file: Option<String>, stderr_file: Op
 
     match stderr_file {
         Some(stderr) => {
-            let stderr_as_ptr = CString::new(stderr).unwrap().as_ptr();
-            let stderr_file = fopen(stderr_as_ptr, transmute(b"w+\0"));
+            let path_c = try!(pathbuf_into_cstring(stderr));
+            let stderr_file = fopen(path_c.as_ptr(), transmute(b"w+\0"));
             if stderr_file.is_null() {
                 return Err(DaemonizeError::RedirectStreams(libc::ENOENT))
             };
