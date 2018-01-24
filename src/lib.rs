@@ -359,7 +359,6 @@ impl<T> Daemonize<T> {
 
 unsafe fn perform_fork() -> Result<()> {
     let pid = fork();
-    thread::sleep(Duration::from_secs(60));
     if pid < 0 {
         Err(DaemonizeError::Fork)
     } else if pid == 0 {
