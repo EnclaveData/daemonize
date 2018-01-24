@@ -377,19 +377,15 @@ unsafe fn redirect_standard_streams(stdout_file: Option<String>, stderr_file: Op
         tryret!(close(*stream), (), DaemonizeError::RedirectStreams);
     }
 
-//    let devnull_fd: libc::c_int;
+    let devnull_file = fopen(transmute(b"/dev/null\0"), transmute(b"w+\0"));
+    if devnull_file.is_null() {
+        return Err(DaemonizeError::RedirectStreams(errno()))
+    };
 
-//    {
-        let devnull_file = fopen(transmute(b"/dev/null\0"), transmute(b"w+\0"));
-        if devnull_file.is_null() {
-            return Err(DaemonizeError::RedirectStreams(errno()))
-        };
-
-        // for_every_stream!(|stream| dup2(devnull_fd, stream));
-        let devnull_fd : libc::c_int = fileno(devnull_file);
-        tryret!(dup2(devnull_fd, libc::STDIN_FILENO), (), DaemonizeError::RedirectStreams);
-        tryret!(close(devnull_fd), (), DaemonizeError::RedirectStreams);
-//    }
+    // for_every_stream!(|stream| dup2(devnull_fd, stream));
+    let devnull_fd : libc::c_int = fileno(devnull_file);
+    tryret!(dup2(devnull_fd, libc::STDIN_FILENO), (), DaemonizeError::RedirectStreams);
+//    tryret!(close(devnull_fd), (), DaemonizeError::RedirectStreams);
 
     match stdout_file {
         Some(stdout) => {
